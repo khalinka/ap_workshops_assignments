@@ -1,0 +1,802 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Six-Dice Duel</title>
+  <style>
+    :root {
+      --bg: #f4f5f7;
+      --card: #ffffff;
+      --bar: #f1f3f6;
+      --text: #1f2430;
+      --muted: #6b7280;
+      --table: #e4e8ee;
+      --accent: #3b5bdb;
+      --accent-hover: #2f4ac0;
+      --you: #3b5bdb;
+      --cpu: #e8590c;
+    }
+    @media (prefers-color-scheme: dark) {
+      :root {
+        --bg: #15171c;
+        --card: #1e2128;
+        --bar: #262a33;
+        --text: #e8eaee;
+        --muted: #9aa1ad;
+        --table: #2c313b;
+        --accent: #5c7cfa;
+        --accent-hover: #748ffc;
+        --you: #5c7cfa;
+        --cpu: #ff8a3d;
+      }
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      min-height: 100vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 16px;
+      background: var(--bg);
+      color: var(--text);
+      font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    }
+
+    .card {
+      width: 100%;
+      max-width: 560px;
+      background: var(--card);
+      border-radius: 16px;
+      padding: 24px;
+      text-align: center;
+      box-shadow: 0 4px 24px rgba(0, 0, 0, 0.08);
+    }
+
+    h1 {
+      margin: 0 0 16px;
+      font-size: 1.25rem;
+      font-weight: 600;
+      letter-spacing: 0.02em;
+    }
+
+    .scorebar {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 8px 14px;
+      margin-bottom: 10px;
+      background: var(--bar);
+      border: 2px solid transparent;
+      border-radius: 10px;
+      transition: border-color 0.2s;
+    }
+    .scorebar.you { --player-color: var(--you); }
+    .scorebar.cpu { --player-color: var(--cpu); }
+    .scorebar.active { border-color: var(--player-color); }
+    .scorebar .name {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-weight: 600;
+    }
+    .swatch {
+      width: 10px;
+      height: 10px;
+      border-radius: 50%;
+      background: var(--player-color);
+    }
+    .scorebar .detail {
+      color: var(--muted);
+      font-size: 0.85rem;
+      margin-left: auto;
+      margin-right: 12px;
+    }
+    .scorebar .score {
+      font-size: 1.5rem;
+      font-weight: 700;
+      min-width: 2ch;
+      text-align: right;
+    }
+
+    .stage {
+      width: 100%;
+      aspect-ratio: 4 / 3;
+      background: var(--table);
+      border-radius: 12px;
+      overflow: hidden;
+      margin-bottom: 10px;
+    }
+    .stage canvas {
+      display: block;
+      width: 100%;
+      height: 100%;
+      touch-action: manipulation;
+    }
+
+    .status {
+      margin: 14px 0;
+      min-height: 2.6em;
+      color: var(--muted);
+      font-size: 0.95rem;
+      line-height: 1.3;
+    }
+
+    .actions {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 8px;
+    }
+
+    button {
+      width: 100%;
+      padding: 12px 8px;
+      font-size: 0.95rem;
+      font-weight: 600;
+      color: #fff;
+      background: var(--accent);
+      border: none;
+      border-radius: 10px;
+      cursor: pointer;
+      transition: background 0.15s, opacity 0.15s;
+    }
+    button:hover:not(:disabled) { background: var(--accent-hover); }
+    button:disabled { opacity: 0.45; cursor: default; }
+    button:focus-visible { outline: 3px solid var(--accent); outline-offset: 3px; }
+    button[hidden] { display: none; }
+
+    #newGame { margin-top: 10px; }
+  </style>
+  <script type="importmap">
+    {
+      "imports": {
+        "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+        "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/",
+        "cannon-es": "https://cdn.jsdelivr.net/npm/cannon-es@0.20.0/dist/cannon-es.js"
+      }
+    }
+  </script>
+</head>
+<body>
+  <main class="card">
+    <h1>Six-Dice Duel</h1>
+
+    <div class="scorebar cpu" id="barCpu">
+      <span class="name"><span class="swatch"></span>Computer</span>
+      <span class="detail" id="detailCpu"></span>
+      <span class="score" id="scoreCpu">0</span>
+    </div>
+
+    <div class="stage" id="stage"></div>
+
+    <div class="scorebar you" id="barYou">
+      <span class="name"><span class="swatch"></span>You</span>
+      <span class="detail" id="detailYou"></span>
+      <span class="score" id="scoreYou">0</span>
+    </div>
+
+    <p class="status" id="status" aria-live="polite">Loading dice…</p>
+
+    <div class="actions">
+      <button id="take" disabled>Take die</button>
+      <button id="rerollMine" disabled>Re-roll my die</button>
+      <button id="rerollPile" disabled>Re-roll pile</button>
+    </div>
+    <button id="newGame" hidden>New game</button>
+  </main>
+
+  <script>
+    // If the 3D libraries can't be fetched, say so instead of hanging on "Loading"
+    setTimeout(() => {
+      if (!window.diceReady) {
+        document.getElementById("status").textContent =
+          "Couldn't load the 3D libraries. Check your internet connection and reload.";
+      }
+    }, 8000);
+  </script>
+
+  <script type="module">
+    import * as THREE from "three";
+    import { RoundedBoxGeometry } from "three/addons/geometries/RoundedBoxGeometry.js";
+    import * as CANNON from "cannon-es";
+
+    // Grid cells (1–9, row by row) that hold a pip for each face value
+    const PIP_LAYOUT = {
+      1: [5],
+      2: [1, 9],
+      3: [1, 5, 9],
+      4: [1, 3, 7, 9],
+      5: [1, 3, 5, 7, 9],
+      6: [1, 3, 4, 6, 7, 9]
+    };
+
+    // BoxGeometry face order is +X, -X, +Y, -Y, +Z, -Z; opposite faces sum to 7
+    const FACE_VALUES = [1, 6, 2, 5, 3, 4];
+    const FACE_NORMALS = [
+      new THREE.Vector3(1, 0, 0), new THREE.Vector3(-1, 0, 0),
+      new THREE.Vector3(0, 1, 0), new THREE.Vector3(0, -1, 0),
+      new THREE.Vector3(0, 0, 1), new THREE.Vector3(0, 0, -1)
+    ];
+
+    // The table is split front-to-back: computer zone, shared pile, your zone.
+    // Every zone is deeper than a die's corner-to-corner length (1.73) so a die can't wedge across it.
+    const TABLE_X = 4;
+    const TABLE_Z = 3.2;
+    const DIVIDER_Z = 1.2;
+    const PLAYER_ZONE_Z = (TABLE_Z + DIVIDER_Z) / 2;
+    const ZONES = {
+      cpu: { z: -PLAYER_ZONE_Z, depth: TABLE_Z - DIVIDER_Z },
+      pile: { z: 0, depth: DIVIDER_Z * 2 },
+      you: { z: PLAYER_ZONE_Z, depth: TABLE_Z - DIVIDER_Z }
+    };
+
+    const DICE_COUNT = 6;
+    const CARRY_HEIGHT = 1.7;  // a taken die travels above the others at this height
+    const YOU_COLOR = 0x3b5bdb;
+    const CPU_COLOR = 0xe8590c;
+
+    const stage = document.getElementById("stage");
+    const statusEl = document.getElementById("status");
+    const takeBtn = document.getElementById("take");
+    const rerollMineBtn = document.getElementById("rerollMine");
+    const rerollPileBtn = document.getElementById("rerollPile");
+    const newGameBtn = document.getElementById("newGame");
+    const bars = {
+      you: { bar: document.getElementById("barYou"), detail: document.getElementById("detailYou"), score: document.getElementById("scoreYou") },
+      cpu: { bar: document.getElementById("barCpu"), detail: document.getElementById("detailCpu"), score: document.getElementById("scoreCpu") }
+    };
+
+    // ---------- Rendering ----------
+
+    const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+    renderer.shadowMap.enabled = true;
+    renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+    stage.appendChild(renderer.domElement);
+    const canvas = renderer.domElement;
+
+    const scene = new THREE.Scene();
+
+    const camera = new THREE.PerspectiveCamera(35, 4 / 3, 0.1, 100);
+    camera.position.set(0, 12, 5.5);
+    camera.lookAt(0, 0, 0.3);
+
+    scene.add(new THREE.HemisphereLight(0xffffff, 0x777777, 1.6));
+
+    const sun = new THREE.DirectionalLight(0xffffff, 2.2);
+    sun.position.set(3, 10, 4);
+    sun.castShadow = true;
+    sun.shadow.mapSize.set(1024, 1024);
+    Object.assign(sun.shadow.camera, { left: -7, right: 7, top: 7, bottom: -7, near: 1, far: 30 });
+    scene.add(sun);
+
+    // The table colour comes from the page background; this plane only catches shadows
+    const floor = new THREE.Mesh(
+      new THREE.PlaneGeometry(40, 40),
+      new THREE.ShadowMaterial({ opacity: 0.22 })
+    );
+    floor.rotation.x = -Math.PI / 2;
+    floor.receiveShadow = true;
+    scene.add(floor);
+
+    // Tinted strips mark each player's zone
+    function addZoneTint(zone, color) {
+      const tint = new THREE.Mesh(
+        new THREE.PlaneGeometry(TABLE_X * 2, zone.depth),
+        new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0.12, depthWrite: false })
+      );
+      tint.rotation.x = -Math.PI / 2;
+      tint.position.set(0, 0.003, zone.z);
+      scene.add(tint);
+    }
+    addZoneTint(ZONES.cpu, CPU_COLOR);
+    addZoneTint(ZONES.you, YOU_COLOR);
+
+    function makeFaceTexture(value) {
+      const size = 256;
+      const faceCanvas = document.createElement("canvas");
+      faceCanvas.width = faceCanvas.height = size;
+      const ctx = faceCanvas.getContext("2d");
+      ctx.fillStyle = "#fafafa";
+      ctx.fillRect(0, 0, size, size);
+      ctx.fillStyle = "#1f2430";
+      for (const cell of PIP_LAYOUT[value]) {
+        const col = (cell - 1) % 3;
+        const row = Math.floor((cell - 1) / 3);
+        ctx.beginPath();
+        ctx.arc(size * (0.25 + col * 0.25), size * (0.25 + row * 0.25), size * 0.085, 0, Math.PI * 2);
+        ctx.fill();
+      }
+      const texture = new THREE.CanvasTexture(faceCanvas);
+      texture.colorSpace = THREE.SRGBColorSpace;
+      texture.anisotropy = renderer.capabilities.getMaxAnisotropy();
+      return texture;
+    }
+
+    const dieGeometry = new RoundedBoxGeometry(1, 1, 1, 4, 0.12);
+    const dieMaterials = FACE_VALUES.map(
+      (v) => new THREE.MeshStandardMaterial({ map: makeFaceTexture(v), roughness: 0.35 })
+    );
+
+    // ---------- Physics ----------
+
+    const world = new CANNON.World({ gravity: new CANNON.Vec3(0, -30, 0) });
+    const tableMat = new CANNON.Material("table");
+    const diceMat = new CANNON.Material("dice");
+    world.addContactMaterial(new CANNON.ContactMaterial(tableMat, diceMat, { friction: 0.3, restitution: 0.45 }));
+    world.addContactMaterial(new CANNON.ContactMaterial(diceMat, diceMat, { friction: 0.2, restitution: 0.5 }));
+    // Frictionless walls: a die leaning on a wall slides down instead of being held up
+    const wallMat = new CANNON.Material("wall");
+    world.addContactMaterial(new CANNON.ContactMaterial(wallMat, diceMat, { friction: 0, restitution: 0.5 }));
+
+    // CANNON.Plane faces +Z locally, so each one is rotated to face into the table
+    function addPlane(material, x, y, z, axis, angle) {
+      const body = new CANNON.Body({ mass: 0, material, shape: new CANNON.Plane() });
+      body.position.set(x, y, z);
+      body.quaternion.setFromAxisAngle(axis, angle);
+      world.addBody(body);
+    }
+    const X_AXIS = new CANNON.Vec3(1, 0, 0);
+    const Y_AXIS = new CANNON.Vec3(0, 1, 0);
+    addPlane(tableMat, 0, 0, 0, X_AXIS, -Math.PI / 2);       // floor
+    addPlane(wallMat, -TABLE_X, 0, 0, Y_AXIS, Math.PI / 2);  // left wall
+    addPlane(wallMat, TABLE_X, 0, 0, Y_AXIS, -Math.PI / 2);  // right wall
+    addPlane(wallMat, 0, 0, -TABLE_Z, Y_AXIS, 0);            // back wall
+    addPlane(wallMat, 0, 0, TABLE_Z, Y_AXIS, Math.PI);       // front wall
+
+    // Planes are half-spaces, so the zone dividers are thin boxes instead
+    function addDivider(z) {
+      const body = new CANNON.Body({
+        mass: 0,
+        material: wallMat,
+        shape: new CANNON.Box(new CANNON.Vec3(TABLE_X, 3, 0.05))
+      });
+      body.position.set(0, 3, z);
+      world.addBody(body);
+    }
+    addDivider(-DIVIDER_Z);
+    addDivider(DIVIDER_Z);
+
+    function createDie() {
+      // Each die gets its own materials so it can be highlighted on its own
+      const mesh = new THREE.Mesh(dieGeometry, dieMaterials.map((m) => m.clone()));
+      mesh.castShadow = true;
+      mesh.receiveShadow = true;
+      scene.add(mesh);
+
+      const body = new CANNON.Body({
+        mass: 1,
+        material: diceMat,
+        shape: new CANNON.Box(new CANNON.Vec3(0.5, 0.5, 0.5)),
+        linearDamping: 0.1,
+        angularDamping: 0.1
+      });
+      world.addBody(body);
+
+      return { mesh, body, owner: "pile", value: 1 };
+    }
+
+    const dice = Array.from({ length: DICE_COUNT }, createDie);
+
+    function setGlow(die, color) {
+      for (const m of die.mesh.material) {
+        m.emissive.setHex(color || 0x000000);
+        m.emissiveIntensity = 0.45;
+      }
+    }
+
+    // ---------- Rolling & settling ----------
+
+    let settling = false;
+    let afterSettle = null;  // runs once every die has come to rest
+    let settleStart = 0;
+    let stillFrames = 0;
+    let nudges = 0;          // hops given to leaning dice during this settle
+    let carrying = null;     // { die, lifting, target, slot, rotation } while a die is moved by hand
+
+    function rand(min, max) {
+      return min + Math.random() * (max - min);
+    }
+
+    function launch(die, upSpeed, spin) {
+      // Drift back toward the middle of the die's own zone so it doesn't hug the walls
+      const zone = ZONES[die.owner];
+      const p = die.body.position;
+      const sideways = die.owner === "pile" ? 1.5 : 0.5;
+      die.body.velocity.set(
+        -p.x * 1.2 + rand(-2, 2),
+        upSpeed,
+        (zone.z - p.z) * 1.2 + rand(-sideways, sideways)
+      );
+      die.body.angularVelocity.set(rand(-spin, spin), rand(-spin, spin), rand(-spin, spin));
+      die.body.wakeUp();
+    }
+
+    function rollDice(list, minUp, maxUp) {
+      for (const die of list) launch(die, rand(minUp, maxUp), 20);
+    }
+
+    function waitForSettle(callback) {
+      afterSettle = callback;
+      settling = true;
+      settleStart = performance.now();
+      stillFrames = 0;
+      nudges = 0;
+    }
+
+    // Which face points most nearly straight up, and whether the die is lying flat
+    function readTopFace(body) {
+      const q = new THREE.Quaternion(body.quaternion.x, body.quaternion.y, body.quaternion.z, body.quaternion.w);
+      let bestUp = -Infinity;
+      let value = 1;
+      FACE_NORMALS.forEach((normal, i) => {
+        const up = normal.clone().applyQuaternion(q).y;
+        if (up > bestUp) {
+          bestUp = up;
+          value = FACE_VALUES[i];
+        }
+      });
+      return { value, flat: bestUp > 0.95 };
+    }
+
+    // The same orientation turned the shortest way so its most-upward face points straight up
+    function flatRotation(body) {
+      const q = new THREE.Quaternion(body.quaternion.x, body.quaternion.y, body.quaternion.z, body.quaternion.w);
+      let top = null;
+      for (const normal of FACE_NORMALS) {
+        const pointing = normal.clone().applyQuaternion(q);
+        if (!top || pointing.y > top.y) top = pointing;
+      }
+      return new THREE.Quaternion().setFromUnitVectors(top, new THREE.Vector3(0, 1, 0)).multiply(q);
+    }
+
+    function checkSettled(now) {
+      if (carrying) {
+        stillFrames = 0;
+        return;
+      }
+      const still = dice.every(
+        (d) => d.body.velocity.length() < 0.1 && d.body.angularVelocity.length() < 0.1
+      );
+      stillFrames = still ? stillFrames + 1 : 0;
+      const timedOut = now - settleStart > 8000;
+      if (stillFrames < 20 && !timedOut) return;
+
+      const faces = dice.map((d) => readTopFace(d.body));
+      const cocked = dice.filter((_, i) => !faces[i].flat);
+
+      if (cocked.length) {
+        stillFrames = 0;
+        // A die resting tilted (leaning on another die or a wall) first gets a couple of small hops
+        if (nudges < 2 && !timedOut) {
+          nudges++;
+          cocked.forEach((d) => launch(d, 4, 6));
+          return;
+        }
+        // Still stuck: pick it up and set it down flat in a free spot in its zone
+        carry(cocked[0], cocked[0].owner, true);
+        settleStart = now;
+        return;
+      }
+
+      dice.forEach((d, i) => { d.value = faces[i].value; });
+      settling = false;
+      const callback = afterSettle;
+      afterSettle = null;
+      if (callback) callback();
+    }
+
+    // Pick the first slot in the zone that isn't already taken by a die
+    function freeSlot(owner, movingDie) {
+      const z = ZONES[owner].z;
+      const others = dice.filter((d) => d !== movingDie && d.owner === owner);
+      let best = null;
+      let bestGap = -1;
+      for (let k = 0; k < DICE_COUNT; k++) {
+        const x = -3 + 1.2 * k;
+        const gap = Math.min(
+          Infinity,
+          ...others.map((d) => Math.hypot(d.body.position.x - x, d.body.position.z - z))
+        );
+        if (gap > 1.3) return new THREE.Vector3(x, CARRY_HEIGHT, z);
+        if (gap > bestGap) {
+          bestGap = gap;
+          best = new THREE.Vector3(x, CARRY_HEIGHT, z);
+        }
+      }
+      return best;
+    }
+
+    // Lift the die straight up, fly it to a free slot in the zone, then drop it flat so it keeps its face.
+    // With flatten, a tilted die is also turned upright on the way.
+    function carry(die, owner, flatten = false) {
+      const slot = freeSlot(owner, die);
+      die.owner = owner;
+      die.body.type = CANNON.Body.KINEMATIC;
+      die.body.angularVelocity.set(0, 0, 0);
+      const p = die.body.position;
+      carrying = {
+        die,
+        lifting: true,
+        target: new THREE.Vector3(p.x, CARRY_HEIGHT, p.z),
+        slot,
+        rotation: flatten ? flatRotation(die.body) : null
+      };
+    }
+
+    function updateCarry() {
+      const { die, target, rotation } = carrying;
+      const p = die.body.position;
+      const offset = new THREE.Vector3(target.x - p.x, target.y - p.y, target.z - p.z);
+      const dist = offset.length();
+
+      if (rotation) {
+        const bq = die.body.quaternion;
+        const q = new THREE.Quaternion(bq.x, bq.y, bq.z, bq.w).slerp(rotation, 0.15);
+        bq.set(q.x, q.y, q.z, q.w);
+      }
+
+      if (dist < 0.05) {
+        if (carrying.lifting) {
+          carrying.lifting = false;
+          target.copy(carrying.slot);
+        } else {
+          if (rotation) die.body.quaternion.set(rotation.x, rotation.y, rotation.z, rotation.w);
+          die.body.type = CANNON.Body.DYNAMIC;
+          die.body.velocity.set(0, 0, 0);
+          die.body.angularVelocity.set(0, 0, 0);
+          die.body.wakeUp();
+          carrying = null;
+          return;
+        }
+      }
+
+      // Steer with velocity so collisions still resolve; ease in near the target
+      const speed = Math.min(dist * 10, 7);
+      offset.normalize().multiplyScalar(speed);
+      die.body.velocity.set(offset.x, offset.y, offset.z);
+    }
+
+    // ---------- Game ----------
+
+    let phase = "loading";   // "rolling" | "you" | "cpu" | "over"
+    let current = "you";     // whose turn it is
+    let nextStarter = "you"; // the starting player alternates between games
+    let selected = null;
+    let note = "";           // what just happened, shown before the turn prompt
+    let cpuLastAction = null;
+
+    const NAMES = { you: "You", cpu: "Computer" };
+    const other = (player) => (player === "you" ? "cpu" : "you");
+    const pileDice = () => dice.filter((d) => d.owner === "pile");
+    const diceOf = (player) => dice.filter((d) => d.owner === player);
+    const scoreOf = (player) => diceOf(player).reduce((sum, d) => sum + d.value, 0);
+
+    function setStatus(text) {
+      statusEl.textContent = (note ? note + " " : "") + text;
+    }
+
+    function updateScores() {
+      for (const player of ["you", "cpu"]) {
+        const values = diceOf(player).map((d) => d.value);
+        bars[player].score.textContent = scoreOf(player);
+        bars[player].detail.textContent = values.length > 1 ? values.join(" + ") : "";
+        bars[player].bar.classList.toggle("active", phase === player);
+      }
+    }
+
+    function updateButtons() {
+      const myTurn = phase === "you";
+      takeBtn.disabled = !(myTurn && selected && selected.owner === "pile");
+      rerollMineBtn.disabled = !(myTurn && selected && selected.owner === "you");
+      rerollPileBtn.disabled = !myTurn;
+    }
+
+    function setSelected(die) {
+      if (selected) setGlow(selected, null);
+      selected = die;
+      if (selected) setGlow(selected, YOU_COLOR);
+      updateButtons();
+    }
+
+    function newGame() {
+      newGameBtn.hidden = true;
+      phase = "rolling";
+      current = nextStarter;
+      nextStarter = other(nextStarter);
+      cpuLastAction = null;
+      note = "";
+      setSelected(null);
+
+      dice.forEach((d, i) => {
+        d.owner = "pile";
+        d.value = 1;
+        d.body.type = CANNON.Body.DYNAMIC;
+        d.body.position.set(-2.75 + 1.1 * i, 0.5, 0);
+        d.body.quaternion.set(0, 0, 0, 1);
+        d.body.velocity.set(0, 0, 0);
+        d.body.angularVelocity.set(0, 0, 0);
+        setGlow(d, null);
+      });
+      updateScores();
+      setStatus("Rolling the dice…");
+
+      rollDice(dice, 9, 11);
+      waitForSettle(beginTurn);
+    }
+
+    function beginTurn() {
+      if (pileDice().length === 0) {
+        gameOver();
+        return;
+      }
+      phase = current;
+      updateScores();
+      updateButtons();
+      if (current === "you") {
+        setStatus("Your turn: select a pile die to take it, select one of yours to re-roll it, or re-roll the pile.");
+      } else {
+        cpuTurn();
+      }
+    }
+
+    function act(actor, kind, die) {
+      phase = "rolling";
+      setSelected(null);
+      updateScores();
+      if (actor === "cpu") cpuLastAction = kind;
+      const who = NAMES[actor];
+
+      if (kind === "take") {
+        note = `${who} took a ${die.value}.`;
+        setStatus("");
+        carry(die, actor);
+        waitForSettle(endAction);
+      } else if (kind === "rerollPile") {
+        const pile = pileDice();
+        note = "";
+        setStatus(`${who} re-rolled the pile…`);
+        rollDice(pile, 9, 11);
+        waitForSettle(() => {
+          note = `${who} re-rolled the pile: ${pile.map((d) => d.value).join(", ")}.`;
+          endAction();
+        });
+      } else {
+        const before = die.value;
+        note = "";
+        setStatus(`${who} re-rolled a ${before}…`);
+        rollDice([die], 7, 9);
+        waitForSettle(() => {
+          note = `${who} re-rolled a ${before} into a ${die.value}.`;
+          endAction();
+        });
+      }
+    }
+
+    function endAction() {
+      current = other(current);
+      updateScores();
+      beginTurn();
+    }
+
+    function gameOver() {
+      phase = "over";
+      updateScores();
+      updateButtons();
+      const you = scoreOf("you");
+      const cpu = scoreOf("cpu");
+      if (you > cpu) setStatus(`You win ${you} to ${cpu}!`);
+      else if (cpu > you) setStatus(`Computer wins ${cpu} to ${you}.`);
+      else setStatus(`It's a draw at ${you} each.`);
+      newGameBtn.hidden = false;
+    }
+
+    // ---------- Computer opponent ----------
+
+    function chooseCpuAction() {
+      const pile = pileDice().sort((a, b) => b.value - a.value);
+      const mine = diceOf("cpu").sort((a, b) => a.value - b.value);
+      const best = pile[0];
+
+      // Taking the last pile die ends the game, so only do it when it doesn't lose
+      if (pile.length === 1 && scoreOf("cpu") + best.value < scoreOf("you")) {
+        if (mine.length && mine[0].value < 6) return { kind: "rerollOwn", die: mine[0] };
+        return { kind: "rerollPile" };
+      }
+      if (best.value >= 5) return { kind: "take", die: best };
+      if (mine.length && mine[0].value <= 2) return { kind: "rerollOwn", die: mine[0] };
+      if (pile.length > 1 && best.value <= 3 && cpuLastAction !== "rerollPile") return { kind: "rerollPile" };
+      return { kind: "take", die: best };
+    }
+
+    function cpuTurn() {
+      setStatus("Computer is thinking…");
+      setTimeout(() => {
+        const choice = chooseCpuAction();
+        if (!choice.die) {
+          act("cpu", choice.kind);
+          return;
+        }
+        // Show which die it picked before acting
+        setGlow(choice.die, CPU_COLOR);
+        setTimeout(() => {
+          setGlow(choice.die, null);
+          act("cpu", choice.kind, choice.die);
+        }, 600);
+      }, 900);
+    }
+
+    // ---------- Input ----------
+
+    const raycaster = new THREE.Raycaster();
+    const pointerNdc = new THREE.Vector2();
+
+    function dieUnderPointer(e) {
+      const rect = canvas.getBoundingClientRect();
+      pointerNdc.set(
+        ((e.clientX - rect.left) / rect.width) * 2 - 1,
+        -((e.clientY - rect.top) / rect.height) * 2 + 1
+      );
+      raycaster.setFromCamera(pointerNdc, camera);
+      const hit = raycaster.intersectObjects(dice.map((d) => d.mesh))[0];
+      return hit ? dice.find((d) => d.mesh === hit.object) : null;
+    }
+
+    // On your turn you can select pile dice and your own dice, never the computer's
+    function selectable(die) {
+      return phase === "you" && die && die.owner !== "cpu";
+    }
+
+    canvas.addEventListener("pointerdown", (e) => {
+      const die = dieUnderPointer(e);
+      if (!selectable(die)) return;
+      setSelected(die === selected ? null : die);
+    });
+
+    canvas.addEventListener("pointermove", (e) => {
+      canvas.style.cursor = selectable(dieUnderPointer(e)) ? "pointer" : "";
+    });
+
+    takeBtn.addEventListener("click", () => act("you", "take", selected));
+    rerollMineBtn.addEventListener("click", () => act("you", "rerollOwn", selected));
+    rerollPileBtn.addEventListener("click", () => act("you", "rerollPile"));
+    newGameBtn.addEventListener("click", newGame);
+
+    // ---------- Loop & sizing ----------
+
+    function resize() {
+      const w = stage.clientWidth;
+      const h = stage.clientHeight;
+      renderer.setSize(w, h, false);
+      camera.aspect = w / h;
+      camera.updateProjectionMatrix();
+    }
+    new ResizeObserver(resize).observe(stage);
+    resize();
+
+    let lastTime = performance.now();
+    function animate(now) {
+      const dt = Math.min((now - lastTime) / 1000, 0.1);
+      lastTime = now;
+
+      if (carrying) updateCarry();
+      world.step(1 / 120, dt, 10);
+      for (const d of dice) {
+        d.mesh.position.copy(d.body.position);
+        d.mesh.quaternion.copy(d.body.quaternion);
+      }
+      if (settling) checkSettled(now);
+
+      renderer.render(scene, camera);
+      requestAnimationFrame(animate);
+    }
+    requestAnimationFrame(animate);
+
+    window.diceReady = true;
+    newGame();
+  </script>
+</body>
+</html>
