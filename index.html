@@ -222,7 +222,8 @@
     ];
 
     // The table is split front-to-back: computer zone, shared pile, your zone.
-    // Every zone is deeper than a die's corner-to-corner length (1.73) so a die can't wedge across it.
+    // Every zone is much deeper than a die's corner-to-corner length so a die can't wedge across it.
+    const DIE_SIZE = 0.7;
     const TABLE_X = 4;
     const TABLE_Z = 3.2;
     const DIVIDER_Z = 1.2;
@@ -234,7 +235,8 @@
     };
 
     const DICE_COUNT = 6;
-    const CARRY_HEIGHT = 1.7;  // a taken die travels above the others at this height
+    const CARRY_HEIGHT = DIE_SIZE * 1.7;  // a taken die travels above the others at this height
+    const SLOT_SPACING = DIE_SIZE * 1.45;  // where taken dice are set down in a zone
     const YOU_COLOR = 0x3b5bdb;
     const CPU_COLOR = 0xe8590c;
 
@@ -316,7 +318,7 @@
       return texture;
     }
 
-    const dieGeometry = new RoundedBoxGeometry(1, 1, 1, 4, 0.12);
+    const dieGeometry = new RoundedBoxGeometry(DIE_SIZE, DIE_SIZE, DIE_SIZE, 4, DIE_SIZE * 0.12);
     const dieMaterials = FACE_VALUES.map(
       (v) => new THREE.MeshStandardMaterial({ map: makeFaceTexture(v), roughness: 0.35 })
     );
@@ -324,6 +326,7 @@
     // ---------- Physics ----------
 
     const world = new CANNON.World({ gravity: new CANNON.Vec3(0, -30, 0) });
+    world.solver.iterations = 20;  // more contact passes keep small dice from sinking into each other
     const tableMat = new CANNON.Material("table");
     const diceMat = new CANNON.Material("dice");
     world.addContactMaterial(new CANNON.ContactMaterial(tableMat, diceMat, { friction: 0.3, restitution: 0.45 }));
@@ -352,7 +355,7 @@
       const body = new CANNON.Body({
         mass: 0,
         material: wallMat,
-        shape: new CANNON.Box(new CANNON.Vec3(TABLE_X, 3, 0.05))
+        shape: new CANNON.Box(new CANNON.Vec3(TABLE_X, 3, 0.15))
       });
       body.position.set(0, 3, z);
       world.addBody(body);
@@ -370,7 +373,7 @@
       const body = new CANNON.Body({
         mass: 1,
         material: diceMat,
-        shape: new CANNON.Box(new CANNON.Vec3(0.5, 0.5, 0.5)),
+        shape: new CANNON.Box(new CANNON.Vec3(DIE_SIZE / 2, DIE_SIZE / 2, DIE_SIZE / 2)),
         linearDamping: 0.1,
         angularDamping: 0.1
       });
@@ -473,7 +476,7 @@
         // A die resting tilted (leaning on another die or a wall) first gets a couple of small hops
         if (nudges < 2 && !timedOut) {
           nudges++;
-          cocked.forEach((d) => launch(d, 4, 6));
+          cocked.forEach((d) => launch(d, 3, 6));
           return;
         }
         // Still stuck: pick it up and set it down flat in a free spot in its zone
@@ -496,12 +499,12 @@
       let best = null;
       let bestGap = -1;
       for (let k = 0; k < DICE_COUNT; k++) {
-        const x = -3 + 1.2 * k;
+        const x = (k - (DICE_COUNT - 1) / 2) * SLOT_SPACING;
         const gap = Math.min(
           Infinity,
           ...others.map((d) => Math.hypot(d.body.position.x - x, d.body.position.z - z))
         );
-        if (gap > 1.3) return new THREE.Vector3(x, CARRY_HEIGHT, z);
+        if (gap > SLOT_SPACING * 0.9) return new THREE.Vector3(x, CARRY_HEIGHT, z);
         if (gap > bestGap) {
           bestGap = gap;
           best = new THREE.Vector3(x, CARRY_HEIGHT, z);
@@ -615,7 +618,7 @@
         d.owner = "pile";
         d.value = 1;
         d.body.type = CANNON.Body.DYNAMIC;
-        d.body.position.set(-2.75 + 1.1 * i, 0.5, 0);
+        d.body.position.set((i - (DICE_COUNT - 1) / 2) * SLOT_SPACING, DIE_SIZE / 2, 0);
         d.body.quaternion.set(0, 0, 0, 1);
         d.body.velocity.set(0, 0, 0);
         d.body.angularVelocity.set(0, 0, 0);
@@ -624,7 +627,7 @@
       updateScores();
       setStatus("Rolling the dice…");
 
-      rollDice(dice, 9, 11);
+      rollDice(dice, 7, 9);
       waitForSettle(beginTurn);
     }
 
@@ -659,7 +662,7 @@
         const pile = pileDice();
         note = "";
         setStatus(`${who} re-rolled the pile…`);
-        rollDice(pile, 9, 11);
+        rollDice(pile, 7, 9);
         waitForSettle(() => {
           note = `${who} re-rolled the pile: ${pile.map((d) => d.value).join(", ")}.`;
           endAction();
@@ -668,7 +671,7 @@
         const before = die.value;
         note = "";
         setStatus(`${who} re-rolled a ${before}…`);
-        rollDice([die], 7, 9);
+        rollDice([die], 6, 7);
         waitForSettle(() => {
           note = `${who} re-rolled a ${before} into a ${die.value}.`;
           endAction();
